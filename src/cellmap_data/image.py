@@ -137,6 +137,17 @@ class CellMapImage(CellMapImageBase):
         """Returns a string representation of the CellMapImage object."""
         return f"CellMapImage({self.array_path})"
 
+    def __getstate__(self):
+        """Support pickling for multiprocessing DataLoader."""
+        state = self.__dict__.copy()
+        state.pop("_group", None)
+        state.pop("_array", None)
+        return state
+
+    def __setstate__(self, state):
+        """Restore state after unpickling."""
+        self.__dict__.update(state)
+
     @property
     def coord_offsets(self) -> Mapping[str, np.ndarray]:
         """

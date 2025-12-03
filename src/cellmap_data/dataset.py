@@ -21,6 +21,11 @@ logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
 
 
+def _reconstruct_dataset(cls):
+    """Helper for pickle to bypass CellMapDataset.__new__ custom logic."""
+    return object.__new__(cls)
+
+
 # %%
 class CellMapDataset(CellMapBaseDataset, Dataset):
     """
@@ -277,28 +282,18 @@ class CellMapDataset(CellMapBaseDataset, Dataset):
     def __reduce__(self):
         """
         Support pickling for multiprocessing DataLoader.
+        Uses _reconstruct_dataset to bypass custom __new__ logic during unpickling.
         """
-        args = (
-            self.raw_path,
-            self.target_path,
-            self.classes,
-            self.input_arrays,
-            self.target_arrays,
-            self.spatial_transforms,
-            self.raw_value_transforms,
-            self.target_value_transforms,
-            self.class_relation_dict,
-            self.is_train,
-            self.axis_order,
-            self.context,
-            self._rng,
-            self.force_has_data,
-            self.empty_value,
-            self.pad,
-            self.device.type if hasattr(self, "_device") else None,
-            self._max_workers,
-        )
-        return (self.__class__, args, self.__dict__)
+        state = self.__dict__.copy()
+        state.pop("_executor", None)
+        state.pop("_executor_pid", None)
+        return (_reconstruct_dataset, (self.__class__,), state)
+
+    def __setstate__(self, state):
+        """Restore state after unpickling."""
+        self.__dict__.update(state)
+        self._executor = None
+        self._executor_pid = None
 
     @property
     def center(self) -> Mapping[str, float] | None:

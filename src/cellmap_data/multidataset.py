@@ -80,14 +80,13 @@ class CellMapMultiDataset(CellMapBaseDataset, ConcatDataset):
         out_string += "\n])"
         return out_string
 
-    def __reduce__(self):
-        """
-        Support pickling for multiprocessing DataLoader and spawned processes.
-        """
-        # These are the args __init__ needs:
-        args = (self.classes, self.input_arrays, self.target_arrays, self.datasets)
-        # Return: (callable, args_for_constructor, state_dict)
-        return (self.__class__, args, self.__dict__)
+    def __getstate__(self):
+        """Support pickling for multiprocessing DataLoader."""
+        return self.__dict__.copy()
+
+    def __setstate__(self, state):
+        """Restore state after unpickling."""
+        self.__dict__.update(state)
 
     @property
     def has_data(self) -> bool:
