@@ -27,7 +27,7 @@ def _reconstruct_dataset(cls):
 
 
 # %%
-class CellMapDataset(CellMapBaseDataset, Dataset):
+class CellMapDataset(Dataset, CellMapBaseDataset):
     """
     Subclasses PyTorch Dataset to load CellMap data for training.
 

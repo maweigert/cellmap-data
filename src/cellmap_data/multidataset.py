@@ -15,7 +15,7 @@ from .utils.sampling import min_redundant_inds
 logger = logging.getLogger(__name__)
 
 
-class CellMapMultiDataset(CellMapBaseDataset, ConcatDataset):
+class CellMapMultiDataset(ConcatDataset, CellMapBaseDataset):
     """
     This class is used to combine multiple datasets into a single dataset. It is a subclass of PyTorch's ConcatDataset. It maintains the same API as the ConcatDataset class. It retrieves raw and groundtruth data from multiple CellMapDataset objects. See the CellMapDataset class for more information on the dataset object.
 
