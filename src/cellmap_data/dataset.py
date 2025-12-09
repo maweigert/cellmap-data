@@ -608,8 +608,9 @@ class CellMapDataset(Dataset, CellMapBaseDataset):
                 for label in self.classes:
                     arr = class_arrays.get(label)
                     if arr is not None:
-                        stacked_arrays.append(
-                            arr.to(self.device, non_blocking=True)
+                        # use torch.uint16 as some instance ids > 255
+                        stacked_arrays.append(                            
+                            arr.to(self.device, dtype=torch.uint16, non_blocking=True)
                             if arr.device != self.device
                             else arr
                         )
