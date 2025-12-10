@@ -1,5 +1,6 @@
 import logging
 import os
+from pathlib import Path
 from typing import Any, Callable, Mapping, Optional, Sequence
 
 import dask.array as da
@@ -18,6 +19,23 @@ from .base_image import CellMapImageBase
 
 logger = logging.getLogger(__name__)
 
+
+def is_empty(path: str, level_path: str) -> bool:
+    """
+    Heuristically check if a given multiscale level in a CellMap dataset is empty.
+
+    Args:
+        path (str): The base path to the CellMap dataset.
+        level_path (str): The specific multiscale level path to check.
+    """
+    lvl_path = Path(path)/level_path
+    if not lvl_path.is_dir():
+        # missing dir
+        return True
+    if not any(tuple(f for f in lvl_path.iterdir() if f.is_dir())):
+        # no subdirs
+        return True
+    return False
 
 class CellMapImage(CellMapImageBase):
     """
@@ -427,6 +445,9 @@ class CellMapImage(CellMapImageBase):
         last_path: str | None = None
         scale = {}
         for level in self.group.attrs["multiscales"][0]["datasets"]:
+            if Path(self.path).stem == "fibsem-uint8" and is_empty(self.path, level["path"]):
+                # Level is in metadata but raw is empty - skip to next level
+                continue
             for transform in level["coordinateTransformations"]:
                 if "scale" in transform:
                     scale = {c: s for c, s in zip(axes, transform["scale"])}
