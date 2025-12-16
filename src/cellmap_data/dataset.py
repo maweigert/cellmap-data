@@ -607,10 +607,11 @@ class CellMapDataset(Dataset, CellMapBaseDataset):
                 stacked_arrays = []
                 for label in self.classes:
                     arr = class_arrays.get(label)
-                    if arr is not None:
-                        # use torch.uint16 as some instance ids > 255
+                    # convert to common dtype while keeping nans
+                    arr = arr.float()
+                    if arr is not None:                        
                         stacked_arrays.append(                            
-                            arr.to(self.device, dtype=torch.uint16, non_blocking=True)
+                            arr.to(self.device, non_blocking=True)
                             if arr.device != self.device
                             else arr
                         )
