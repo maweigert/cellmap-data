@@ -19,6 +19,36 @@ from .base_image import CellMapImageBase
 logger = logging.getLogger(__name__)
 
 
+
+def rotate_90z(x,y, k:int=1):
+    """ Rotate (x,y) by k*90 degrees as a permutation within the bounding box of the points
+    """
+    k %= 4
+    if k == 0:
+        return x, y
+
+    ymin, ymax = y.min(), y.max()
+    xmin, xmax = x.min(), x.max()
+
+    hy = int(ymax - ymin)
+    wx = int(xmax - xmin)
+    if hy != wx:
+        raise ValueError(f"bbox must be square but (h={hy}, w={wx}).")
+
+    N = hy 
+    u, v = y - ymin, x - xmin
+    
+    # CCW like np.rot90(..., k=1): (u,v) -> (N - v, u)
+    if k == 1:
+        u2, v2 = (N - v), u
+    elif k == 2:
+        u2, v2 = (N - u), (N - v)
+    else:  # k == 3
+        u2, v2 = v, (N - u)
+
+    return xmin + v2, ymin + u2
+
+
 class CellMapImage(CellMapImageBase):
     """
     A class for handling image data from a CellMap dataset.
@@ -508,6 +538,9 @@ class CellMapImage(CellMapImageBase):
                 coords = self.rotate_coords(
                     coords, self._current_spatial_transforms["rotate"]
                 )
+            if "rotate90z" in self._current_spatial_transforms:
+                # rot90 along z axis by n_rotations*90 degrees
+                coords['x'], coords['y'] = rotate_90z(coords['x'], coords['y'], self._current_spatial_transforms["rotate90z"])
             if "deform" in self._current_spatial_transforms:
                 raise NotImplementedError("Deformations are not yet implemented.")
         self._current_coords = coords

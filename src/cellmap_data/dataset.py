@@ -869,6 +869,10 @@ class CellMapDataset(Dataset, CellMapBaseDataset):
                     rotated_axes[axis] = angle
                 if rotated_axes:
                     spatial_transforms[transform] = rotated_axes
+            elif transform == "rotate90z":
+                # Rotate the z axis by n*90 degrees
+                n_rotations = torch.randint(0,4, (1,), generator=self._rng).item()
+                spatial_transforms[transform] = n_rotations                    
             else:
                 raise ValueError(f"Unknown spatial transform: {transform}")
 
