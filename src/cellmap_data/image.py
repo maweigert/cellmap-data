@@ -1,4 +1,5 @@
 import logging
+import math
 import os
 from pathlib import Path
 from typing import Any, Callable, Mapping, Optional, Sequence
@@ -9,6 +10,7 @@ import torch
 import xarray
 import xarray_tensorstore as xt
 import zarr
+from xarray.core import indexing
 from pydantic_ome_ngff.v04.multiscale import MultiscaleGroupAttrs, MultiscaleMetadata
 from pydantic_ome_ngff.v04.transform import Scale, Translation, VectorScale
 from scipy.spatial.transform import Rotation as rot
@@ -17,6 +19,57 @@ from xarray_ome_ngff.v04.multiscale import coords_from_transforms
 from .base_image import CellMapImageBase
 
 logger = logging.getLogger(__name__)
+
+
+class _ZarrAdapter(indexing.ExplicitlyIndexed):
+    """Zarr array wrapper that prevents xarray from eager loading.
+
+    Uses xarray's ExplicitlyIndexed API so xarray won't call np.asarray()
+    during DataArray construction. Similar to xarray_tensorstore._TensorStoreAdapter.
+    """
+
+    def __init__(self, array: zarr.Array):
+        self._array = array
+
+    @property
+    def shape(self) -> tuple[int, ...]:
+        return self._array.shape
+
+    @property
+    def dtype(self) -> np.dtype:
+        return self._array.dtype
+
+    @property
+    def ndim(self) -> int:
+        return len(self.shape)
+
+    @property
+    def size(self) -> int:
+        return math.prod(self.shape)
+
+    def __getitem__(self, key: indexing.ExplicitIndexer) -> np.ndarray:
+        if isinstance(key, indexing.OuterIndexer):
+            return self._array.oindex[key.tuple]
+        elif isinstance(key, indexing.VectorizedIndexer):
+            return self._array.vindex[key.tuple]
+        else:
+            return self._array[key.tuple]
+
+    # xarray>2024.02.0 uses oindex and vindex properties
+    @property
+    def oindex(self):
+        return self
+
+    @property
+    def vindex(self):
+        return self
+
+    def __array__(self, dtype: Optional[np.dtype] = None) -> np.ndarray:
+        return np.asarray(self._array[...], dtype=dtype)
+
+    def get_duck_array(self) -> np.ndarray:
+        return np.asarray(self)
+
 
 def is_empty(path: str, level_path: str) -> bool:
     """
@@ -339,7 +392,7 @@ class CellMapImage(CellMapImageBase):
                 os.environ.get("CELLMAP_DATA_BACKEND", "tensorstore").lower()
                 != "tensorstore"
             ):
-                data = self.group[self.scale_level]
+                data = _ZarrAdapter(self.group[self.scale_level])
             else:
                 # Construct an xarray with Tensorstore backend
                 spec = xt._zarr_spec_from_path(self.array_path)
