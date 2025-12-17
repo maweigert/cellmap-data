@@ -110,6 +110,7 @@ class CellMapImage(CellMapImageBase):
         self.axes = axis_order[: len(target_voxel_shape)]
         self.value_transform = value_transform
         self.context = context
+        self._resource_pid: int | None = None  # Track PID for fork detection
         self._current_spatial_transforms = None
         self._current_coords: Any = None
         self._current_center = None
@@ -173,11 +174,13 @@ class CellMapImage(CellMapImageBase):
         state = self.__dict__.copy()
         state.pop("_group", None)
         state.pop("_array", None)
+        state.pop("_resource_pid", None)
         return state
 
     def __setstate__(self, state):
         """Restore state after unpickling."""
         self.__dict__.update(state)
+        self._resource_pid = None
 
     @property
     def coord_offsets(self) -> Mapping[str, np.ndarray]:
@@ -278,9 +281,18 @@ class CellMapImage(CellMapImageBase):
             self._scale_level = self.find_level(self.scale)
             return self._scale_level
 
+    def _check_fork(self) -> None:
+        """Detect process fork and invalidate stale file handles."""
+        current_pid = os.getpid()
+        if self._resource_pid != current_pid:
+            self.__dict__.pop("_group", None)
+            self.__dict__.pop("_array", None)
+            self._resource_pid = current_pid
+
     @property
     def group(self) -> zarr.Group:
         """Returns the zarr group object for the multiscale image."""
+        self._check_fork()
         try:
             return self._group
         except AttributeError:
@@ -304,6 +316,7 @@ class CellMapImage(CellMapImageBase):
     @property
     def array(self) -> xarray.DataArray:
         """Returns the image data as an xarray DataArray."""
+        self._check_fork()
         try:
             return self._array
         except AttributeError:
