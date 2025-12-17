@@ -3,7 +3,6 @@ import os
 from pathlib import Path
 from typing import Any, Callable, Mapping, Optional, Sequence
 
-import dask.array as da
 import numpy as np
 import tensorstore as ts
 import torch
@@ -340,10 +339,7 @@ class CellMapImage(CellMapImageBase):
                 os.environ.get("CELLMAP_DATA_BACKEND", "tensorstore").lower()
                 != "tensorstore"
             ):
-                data = da.from_array(
-                    self.group[self.scale_level],
-                    chunks="auto",
-                )
+                data = self.group[self.scale_level]
             else:
                 # Construct an xarray with Tensorstore backend
                 spec = xt._zarr_spec_from_path(self.array_path)
