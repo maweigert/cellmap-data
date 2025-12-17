@@ -1,5 +1,6 @@
 import logging
 import os
+from pathlib import Path
 from typing import Any, Callable, Mapping, Optional, Sequence
 
 import dask.array as da
@@ -471,6 +472,9 @@ class CellMapImage(CellMapImageBase):
         last_path: str | None = None
         scale = {}
         for level in self.group.attrs["multiscales"][0]["datasets"]:
+            if Path(self.path).stem == "fibsem-uint8" and is_empty(self.path, level["path"]):
+                # Level is in metadata but raw is empty - skip to next level
+                continue
             for transform in level["coordinateTransformations"]:
                 if "scale" in transform:
                     scale = {c: s for c, s in zip(axes, transform["scale"])}
