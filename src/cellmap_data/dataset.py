@@ -2,7 +2,7 @@
 import functools
 import logging
 import os
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import ThreadPoolExecutor
 from typing import Any, Callable, Mapping, Optional, Sequence
 
 import numpy as np
@@ -535,82 +535,59 @@ class CellMapDataset(Dataset, CellMapBaseDataset):
         self._current_center = center
         spatial_transforms = self.generate_spatial_transforms()
 
-        def get_input_array(array_name: str) -> tuple[str, torch.Tensor]:
+        outputs: dict[str, Any] = {
+            "__metadata__": self.metadata,
+        }
+
+        # Load input arrays sequentially (avoids closure-based memory leak)
+        for array_name in self.input_arrays.keys():
             self.input_sources[array_name].set_spatial_transforms(spatial_transforms)
             array = self.input_sources[array_name][center]
-            return array_name, array.squeeze()[None, ...]
+            outputs[array_name] = array.squeeze()[None, ...]
 
-        futures = [
-            self.executor.submit(get_input_array, array_name)
-            for array_name in self.input_arrays.keys()
-        ]
-
-        if self.raw_only:
-
-            def get_target_array(array_name: str) -> tuple[str, torch.Tensor]:
+        # Load target arrays sequentially
+        for array_name in self.target_arrays.keys():
+            if self.raw_only:
                 self.target_sources[array_name].set_spatial_transforms(
                     spatial_transforms
                 )
                 array = self.target_sources[array_name][center]
-                return array_name, array.squeeze()[None, ...]
-
-        else:
-
-            def get_target_array(array_name: str) -> tuple[str, torch.Tensor]:
+                outputs[array_name] = array.squeeze()[None, ...]
+            else:
                 class_arrays = dict.fromkeys(self.classes)  # Force order of classes
                 inferred_arrays = []
 
-                def get_label_array(
-                    label: str,
-                ) -> tuple[str, torch.Tensor | None]:
+                # Load each class label sequentially
+                for label in self.classes:
                     source = self.target_sources[array_name].get(label)
                     if isinstance(source, (CellMapImage, EmptyImage)):
                         source.set_spatial_transforms(spatial_transforms)
-                        array = source[center].squeeze()
-                    else:
-                        array = None
-                    return label, array
-
-                label_futures = [
-                    self.executor.submit(get_label_array, label)
-                    for label in self.classes
-                ]
-                for future in as_completed(label_futures):
-                    label, array = future.result()
-                    if array is not None:
-                        class_arrays[label] = array
+                        class_arrays[label] = source[center].squeeze()
                     else:
                         inferred_arrays.append(label)
 
-                empty_array = self.get_empty_store(
-                    self.target_arrays[array_name], device=self.device
-                )
+                # Infer missing labels
+                if inferred_arrays:
+                    empty_array = self.get_empty_store(
+                        self.target_arrays[array_name], device=self.device
+                    )
+                    for label in inferred_arrays:
+                        array = empty_array.clone()
+                        other_labels = self.target_sources[array_name].get(label, [])
+                        for other_label in other_labels:
+                            other_array = class_arrays.get(other_label)
+                            if other_array is not None:
+                                array[other_array > 0] = 0
+                        class_arrays[label] = array
 
-                def infer_label_array(label: str) -> tuple[str, torch.Tensor]:
-                    array = empty_array.clone()
-                    other_labels = self.target_sources[array_name].get(label, [])
-                    for other_label in other_labels:
-                        other_array = class_arrays.get(other_label)
-                        if other_array is not None:
-                            mask = other_array > 0
-                            array[mask] = 0
-                    return label, array
-
-                infer_futures = [
-                    self.executor.submit(infer_label_array, label)
-                    for label in inferred_arrays
-                ]
-                for future in as_completed(infer_futures):
-                    label, array = future.result()
-                    class_arrays[label] = array
-
+                # Stack all classes
                 stacked_arrays = []
                 for label in self.classes:
                     arr = class_arrays.get(label)
-                    # convert to common dtype while keeping nans
-                    arr = arr.float()
-                    if arr is not None:                        
-                        stacked_arrays.append(                            
+                    if arr is not None:
+                        # convert to common dtype while keeping nans
+                        arr = arr.float()
+                        stacked_arrays.append(
                             arr.to(self.device, non_blocking=True)
                             if arr.device != self.device
                             else arr
@@ -622,20 +599,7 @@ class CellMapDataset(Dataset, CellMapBaseDataset):
                         f"Target array {array_name} has {array.shape[0]} classes, "
                         f"but {len(self.classes)} were expected."
                     )
-                return array_name, array
-
-        futures += [
-            self.executor.submit(get_target_array, array_name)
-            for array_name in self.target_arrays.keys()
-        ]
-
-        outputs: dict[str, Any] = {
-            "__metadata__": self.metadata,
-        }
-
-        for future in as_completed(futures):
-            array_name, array = future.result()
-            outputs[array_name] = array
+                outputs[array_name] = array
 
         return outputs
 

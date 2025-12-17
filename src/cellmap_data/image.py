@@ -125,6 +125,7 @@ class CellMapImage(CellMapImageBase):
 
     def __getitem__(self, center: Mapping[str, float]) -> torch.Tensor:
         """Returns image data centered around the given point, based on the scale and shape of the target output image."""
+        
         if isinstance(list(center.values())[0], int | float):
             self._current_center = center
 
@@ -544,7 +545,7 @@ class CellMapImage(CellMapImageBase):
             if "deform" in self._current_spatial_transforms:
                 raise NotImplementedError("Deformations are not yet implemented.")
         self._current_coords = coords
-
+        
         # Pull data from the image
         data = self.return_data(coords)
         data = data.values
@@ -587,6 +588,7 @@ class CellMapImage(CellMapImageBase):
         ),
     ) -> xarray.DataArray:
         """Pulls data from the image based on the given coordinates, applying interpolation if necessary, and returns the data as an xarray DataArray."""
+        
         if not isinstance(list(coords.values())[0][0], (float, int)):
             data = self.array.interp(
                 coords=coords,
