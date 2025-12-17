@@ -137,6 +137,7 @@ class CellMapImage(CellMapImageBase):
         value_transform: Optional[Callable] = None,
         context: Optional[ts.Context] = None,  # type: ignore
         device: Optional[str | torch.device] = None,
+        cache_in_memory: bool = False,
     ) -> None:
         """Initializes a CellMapImage object.
 
@@ -150,6 +151,7 @@ class CellMapImage(CellMapImageBase):
             value_transform (Optional[callable], optional): A function to transform the image pixel data. Defaults to None.
             context (Optional[tensorstore.Context], optional): The context for the image data. Defaults to None.
             device (Optional[str | torch.device], optional): The device to load the image data onto. Defaults to "cuda" if available, then "mps", then "cpu".
+            cache_in_memory (bool, optional): If True, load entire array into RAM for fast access. Defaults to False.
         """
         self.path = path
         self.label_class = target_class
@@ -178,6 +180,7 @@ class CellMapImage(CellMapImageBase):
         self.axes = axis_order[: len(target_voxel_shape)]
         self.value_transform = value_transform
         self.context = context
+        self.cache_in_memory = cache_in_memory
         self._resource_pid: int | None = None  # Track PID for fork detection
         self._current_spatial_transforms = None
         self._current_coords: Any = None
@@ -388,7 +391,17 @@ class CellMapImage(CellMapImageBase):
         try:
             return self._array
         except AttributeError:
-            if (
+            if self.cache_in_memory:
+                # Copy compressed chunks to RAM (avoids disk I/O, stays compressed)
+                from zarr.storage import MemoryStore
+                mem_store = MemoryStore()
+                zarr.copy_store(
+                    self.group.store, mem_store,
+                    source_path=self.scale_level,
+                    dest_path='',
+                )
+                data = _ZarrAdapter(zarr.open(mem_store, mode='r'))
+            elif (
                 os.environ.get("CELLMAP_DATA_BACKEND", "tensorstore").lower()
                 != "tensorstore"
             ):

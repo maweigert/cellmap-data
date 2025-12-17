@@ -60,6 +60,7 @@ class CellMapDataset(Dataset, CellMapBaseDataset):
         pad: bool = True,
         device: Optional[str | torch.device] = None,
         max_workers: Optional[int] = None,
+        cache_target_arrays: bool = False,
     ) -> None:
         """Initializes the CellMapDataset class.
 
@@ -83,6 +84,7 @@ class CellMapDataset(Dataset, CellMapBaseDataset):
             pad: Whether to pad data to match requested array shapes.
             device: The device for torch tensors.
             max_workers: Max worker threads for data loading.
+            cache_target_arrays: If True, load target arrays into RAM for faster access.
         """
         super().__init__()
         self.raw_path = raw_path
@@ -103,6 +105,7 @@ class CellMapDataset(Dataset, CellMapBaseDataset):
         self.force_has_data = force_has_data
         self.empty_value = empty_value
         self.pad = pad
+        self.cache_target_arrays = cache_target_arrays
         self._current_center = None
         self._current_spatial_transforms = None
         self.input_sources: dict[str, CellMapImage] = {}
@@ -136,6 +139,7 @@ class CellMapDataset(Dataset, CellMapBaseDataset):
                     pad=self.pad,
                     pad_value=0,
                     interpolation="linear",
+                    cache_in_memory=self.cache_target_arrays,
                 )
             else:
                 self.target_sources[array_name] = self.get_target_array(array_info)
@@ -208,6 +212,7 @@ class CellMapDataset(Dataset, CellMapBaseDataset):
         pad: bool = True,
         device: Optional[str | torch.device] = None,
         max_workers: Optional[int] = None,
+        cache_target_arrays: bool = False,
     ):
         # If 2D arrays are requested without a slicing axis, create a
         # multidataset with 3 datasets, each slicing along one axis.
@@ -268,6 +273,7 @@ class CellMapDataset(Dataset, CellMapBaseDataset):
                     pad=pad,
                     device=device,
                     max_workers=max_workers,
+                    cache_target_arrays=cache_target_arrays,
                 )
                 datasets.append(dataset_instance)
             return CellMapMultiDataset(
@@ -697,6 +703,7 @@ class CellMapDataset(Dataset, CellMapBaseDataset):
                 pad=self.pad,
                 pad_value=self.empty_value,
                 interpolation="nearest",
+                cache_in_memory=self.cache_target_arrays,
             )
             if not self.has_data:
                 self.has_data = array.class_counts > 0

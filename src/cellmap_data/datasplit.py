@@ -127,6 +127,7 @@ class CellMapDataSplit:
         force_has_data: bool = False,
         context: Optional[tensorstore.Context] = None,  # type: ignore
         device: Optional[str | torch.device] = None,
+        cache_target_arrays: bool = False,
     ) -> None:
         """Initializes the CellMapDatasets class.
 
@@ -204,6 +205,7 @@ class CellMapDataSplit:
             self.pad_training = pad
             self.pad_validation = pad
         self.force_has_data = force_has_data
+        self.cache_target_arrays = cache_target_arrays
 
         if datasets is not None:
             self.datasets = datasets
@@ -354,6 +356,7 @@ class CellMapDataSplit:
                             empty_value=self.empty_value,
                             class_relation_dict=self.class_relation_dict,
                             pad=self.pad_training,
+                            cache_target_arrays=self.cache_target_arrays,
                         )
                     )
                 except Exception as e:
@@ -379,6 +382,7 @@ class CellMapDataSplit:
                             empty_value=self.empty_value,
                             class_relation_dict=self.class_relation_dict,
                             pad=self.pad_validation,
+                            cache_target_arrays=self.cache_target_arrays,
                         )
                     )
                 except Exception as e:
