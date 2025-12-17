@@ -19,7 +19,22 @@ from .base_image import CellMapImageBase
 
 logger = logging.getLogger(__name__)
 
+def is_empty(path: str, level_path: str) -> bool:
+    """
+    Heuristically check if a given multiscale level in a CellMap dataset is empty.
 
+    Args:
+        path (str): The base path to the CellMap dataset.
+        level_path (str): The specific multiscale level path to check.
+    """
+    lvl_path = Path(path)/level_path
+    if not lvl_path.is_dir():
+        # missing dir
+        return True
+    if not any(tuple(f for f in lvl_path.iterdir() if f.is_dir())):
+        # no subdirs
+        return True
+    return False
 
 def rotate_90z(x,y, k:int=1):
     """ Rotate (x,y) by k*90 degrees as a permutation within the bounding box of the points
