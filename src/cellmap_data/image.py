@@ -391,22 +391,11 @@ class CellMapImage(CellMapImageBase):
         try:
             return self._array
         except AttributeError:
-            if self.cache_in_memory:
-                # Copy compressed chunks to RAM (avoids disk I/O, stays compressed)
-                from zarr.storage import MemoryStore
-                mem_store = MemoryStore()
-                zarr.copy_store(
-                    self.group.store, mem_store,
-                    source_path=self.scale_level,
-                    dest_path='',
-                )
-                data = _ZarrAdapter(zarr.open(mem_store, mode='r'))
-            elif (
+            use_tensorstore = (
                 os.environ.get("CELLMAP_DATA_BACKEND", "tensorstore").lower()
-                != "tensorstore"
-            ):
-                data = _ZarrAdapter(self.group[self.scale_level])
-            else:
+                == "tensorstore"
+            )
+            if use_tensorstore:
                 # Construct an xarray with Tensorstore backend
                 spec = xt._zarr_spec_from_path(self.array_path)
                 array_future = ts.open(
@@ -423,6 +412,19 @@ class CellMapImage(CellMapImageBase):
                     )
                     array = array_future.result()
                 data = xt._TensorStoreAdapter(array)
+            elif self.cache_in_memory:
+                # Zarr backend with RAM caching (copy compressed chunks to MemoryStore)
+                from zarr.storage import MemoryStore
+                mem_store = MemoryStore()
+                zarr.copy_store(
+                    self.group.store, mem_store,
+                    source_path=self.scale_level,
+                    dest_path='',
+                )
+                data = _ZarrAdapter(zarr.open(mem_store, mode='r'))
+            else:
+                # Zarr backend (disk)
+                data = _ZarrAdapter(self.group[self.scale_level])
             self._array = xarray.DataArray(data=data, coords=self.full_coords)
             return self._array
 
