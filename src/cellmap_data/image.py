@@ -424,14 +424,15 @@ class CellMapImage(CellMapImageBase):
                 data = xt._TensorStoreAdapter(array)
             elif self.cache_in_memory:
                 print("Caching in memory", self.path)
-                # Zarr backend with RAM caching (copy compressed chunks to MemoryStore)                
+                # Zarr backend with RAM caching (copy compressed chunks to MemoryStore)
                 mem_store = MemoryStore()
                 zarr.copy_store(
                     self.group.store, mem_store,
                     source_path=self.scale_level,
                     dest_path='',
                 )
-                data = _ZarrAdapter(zarr.open(mem_store, mode='r'))
+                self._cached_zarr_array = zarr.open(mem_store, mode='r')
+                data = _ZarrAdapter(self._cached_zarr_array)
             else:
                 # Zarr backend (disk)
                 data = _ZarrAdapter(self.group[self.scale_level])
@@ -654,7 +655,9 @@ class CellMapImage(CellMapImageBase):
         
         # Pull data from the image
         data = self.return_data(coords)
-        data = data.values
+        # Fast path returns numpy directly, slow path returns xarray DataArray
+        if hasattr(data, 'values'):
+            data = data.values
 
         # Apply and spatial transformations that require the image array (e.g. transpose)
         if self._current_spatial_transforms is not None:
@@ -686,7 +689,96 @@ class CellMapImage(CellMapImageBase):
             self._tolerance = float(half_diagonal + 1e-6)
             return self._tolerance
 
+    @property
+    def _array_scale(self) -> Mapping[str, float]:
+        """Get the actual voxel size of the loaded array level."""
+        try:
+            return self._cached_array_scale
+        except AttributeError:
+            for t in self.coordinateTransformations:
+                if isinstance(t, VectorScale):
+                    self._cached_array_scale = {
+                        c: s for c, s in zip(self.axes, t.scale)
+                    }
+                    return self._cached_array_scale
+            raise ValueError("No VectorScale transform found")
 
+    @property
+    def _scales_match(self) -> bool:
+        """Check if array scale matches target scale (no resampling needed)."""
+        try:
+            return self._cached_scales_match
+        except AttributeError:
+            array_scale = self._array_scale
+            target_scale = self.scale
+            self._cached_scales_match = all(
+                abs(array_scale[c] - target_scale[c]) < 1e-6
+                for c in self.axes
+            )
+            return self._cached_scales_match
+
+    @property
+    def _can_use_fast_path(self) -> bool:
+        """Check if fast direct zarr indexing can be used."""
+        return (
+            self.cache_in_memory
+            and self.interpolation == "nearest"
+            and self._scales_match
+        )
+
+    def _world_to_indices(
+        self, coords: Mapping[str, Sequence[float]]
+    ) -> tuple[np.ndarray, ...]:
+        """Convert world coordinates to integer array indices."""
+        indices = []
+        for c in self.axes:
+            origin = self.bounding_box[c][0]
+            voxel_size = self._array_scale[c]
+            idx = np.round(
+                (np.asarray(coords[c]) - origin) / voxel_size
+            ).astype(np.intp)
+            indices.append(idx)
+        return tuple(indices)
+
+    def _index_zarr_direct(
+        self, coords: Mapping[str, Sequence[float]]
+    ) -> np.ndarray:
+        """Fast direct zarr indexing, bypassing xarray."""
+        # Use the cached zarr array directly
+        zarr_array = self._cached_zarr_array
+
+        # Convert world coords to indices
+        indices = self._world_to_indices(coords)
+
+        # Compute OOB mask using world coordinates and tolerance (same as reindex_fast)
+        oob_mask = np.zeros(indices[0].shape, dtype=bool)
+        for i, c in enumerate(self.axes):
+            c_coords = np.asarray(coords[c])
+            c_min, c_max = self.bounding_box[c]
+            c_oob = (c_coords < c_min - self.tolerance) | (c_coords > c_max + self.tolerance)
+            # Reshape for broadcasting along axis i
+            shape = [1] * len(self.axes)
+            shape[i] = len(c_coords)
+            oob_mask = oob_mask | c_oob.reshape(shape)
+
+        # Clip indices to valid range
+        clipped = tuple(
+            np.clip(idx, 0, zarr_array.shape[i] - 1)
+            for i, idx in enumerate(indices)
+        )
+
+        # Direct zarr indexing using outer indexing
+        data = zarr_array.oindex[clipped]
+
+        # Apply fill value for OOB positions
+        if np.any(oob_mask):
+            if np.isnan(self.pad_value) and not np.issubdtype(data.dtype, np.floating):
+                data = data.astype(np.float32)
+            else:
+                data = data.copy()
+            data[oob_mask] = self.pad_value
+
+        return data
 
     def reindex_fast(self, coords: Mapping[str, Sequence[float]]):
         # Use sel (fast, edge clamps) then manually fill out-of-bounds
@@ -729,14 +821,10 @@ class CellMapImage(CellMapImageBase):
                 coords=coords,
                 method=self.interpolation,  # type: ignore
             )
+        elif self.pad and self._can_use_fast_path:
+            # Fast path: direct zarr indexing for cached nearest-neighbor
+            return self._index_zarr_direct(coords)
         elif self.pad:
-            
-            # data = self.array.reindex(
-            #     **(coords),  # type: ignore
-            #     method="nearest",
-            #     tolerance=self.tolerance,
-            #     fill_value=self.pad_value)            
-            
             data = self.reindex_fast(coords)
         else:
             data = self.array.sel(**(coords), method="nearest")  # type: ignore
