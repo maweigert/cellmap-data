@@ -11,6 +11,7 @@ import xarray
 import xarray_tensorstore as xt
 import zarr
 from xarray.core import indexing
+from zarr.storage import MemoryStore
 from pydantic_ome_ngff.v04.multiscale import MultiscaleGroupAttrs, MultiscaleMetadata
 from pydantic_ome_ngff.v04.transform import Scale, Translation, VectorScale
 from scipy.spatial.transform import Rotation as rot
@@ -55,7 +56,6 @@ class _ZarrAdapter(indexing.ExplicitlyIndexed):
         else:
             return self._array[key.tuple]
 
-    # xarray>2024.02.0 uses oindex and vindex properties
     @property
     def oindex(self):
         return self
@@ -115,6 +115,7 @@ def rotate_90z(x,y, k:int=1):
         u2, v2 = v, (N - u)
 
     return xmin + v2, ymin + u2
+
 
 
 class CellMapImage(CellMapImageBase):
@@ -194,6 +195,10 @@ class CellMapImage(CellMapImageBase):
             self.device = "mps"
         else:
             self.device = "cpu"
+
+        # Eagerly cache array if requested (before DataLoader forks workers)
+        if self.cache_in_memory:
+            _ = self.array
 
     def __getitem__(self, center: Mapping[str, float]) -> torch.Tensor:
         """Returns image data centered around the given point, based on the scale and shape of the target output image."""
@@ -357,7 +362,9 @@ class CellMapImage(CellMapImageBase):
         current_pid = os.getpid()
         if self._resource_pid != current_pid:
             self.__dict__.pop("_group", None)
-            self.__dict__.pop("_array", None)
+            # Keep _array if cache_in_memory - MemoryStore is fork-safe
+            if not self.cache_in_memory:
+                self.__dict__.pop("_array", None)
             self._resource_pid = current_pid
 
     @property
@@ -395,6 +402,9 @@ class CellMapImage(CellMapImageBase):
                 os.environ.get("CELLMAP_DATA_BACKEND", "tensorstore").lower()
                 == "tensorstore"
             )
+            if self.cache_in_memory and use_tensorstore:
+                raise ValueError("Cannot cache in memory and use tensorstore at the same time. Please set CELLMAP_DATA_BACKEND='zarr'")
+            
             if use_tensorstore:
                 # Construct an xarray with Tensorstore backend
                 spec = xt._zarr_spec_from_path(self.array_path)
@@ -413,8 +423,8 @@ class CellMapImage(CellMapImageBase):
                     array = array_future.result()
                 data = xt._TensorStoreAdapter(array)
             elif self.cache_in_memory:
-                # Zarr backend with RAM caching (copy compressed chunks to MemoryStore)
-                from zarr.storage import MemoryStore
+                print("Caching in memory", self.path)
+                # Zarr backend with RAM caching (copy compressed chunks to MemoryStore)                
                 mem_store = MemoryStore()
                 zarr.copy_store(
                     self.group.store, mem_store,
@@ -676,6 +686,35 @@ class CellMapImage(CellMapImageBase):
             self._tolerance = float(half_diagonal + 1e-6)
             return self._tolerance
 
+
+
+    def reindex_fast(self, coords: Mapping[str, Sequence[float]]):
+        # Use sel (fast, edge clamps) then manually fill out-of-bounds
+        data = self.array.sel(**(coords), method="nearest")  # type: ignore
+
+        # Build out-of-bounds mask for each axis
+        oob_mask = np.zeros(data.shape, dtype=bool)
+        for i, c in enumerate(self.axes):
+            c_coords = np.asarray(coords[c])
+            c_min, c_max = self.bounding_box[c]
+            c_oob = (c_coords < c_min - self.tolerance) | (c_coords > c_max + self.tolerance)
+            # Reshape for broadcasting along axis i
+            shape = [1] * len(self.axes)
+            shape[i] = len(c_coords)
+            oob_mask = oob_mask | c_oob.reshape(shape)
+
+        # Apply fill value to out-of-bounds positions
+        if np.any(oob_mask):
+            values = data.values
+            # Convert to float if needed for nan fill
+            if np.isnan(self.pad_value) and not np.issubdtype(values.dtype, np.floating):
+                values = values.astype(np.float32)
+            else:
+                values = values.copy()
+            values[oob_mask] = self.pad_value
+            data = xarray.DataArray(values, coords=data.coords, dims=data.dims)
+        return data  
+    
     def return_data(
         self,
         coords: (
@@ -691,12 +730,14 @@ class CellMapImage(CellMapImageBase):
                 method=self.interpolation,  # type: ignore
             )
         elif self.pad:
-            data = self.array.reindex(
-                **(coords),  # type: ignore
-                method="nearest",
-                tolerance=self.tolerance,
-                fill_value=self.pad_value,
-            )
+            
+            # data = self.array.reindex(
+            #     **(coords),  # type: ignore
+            #     method="nearest",
+            #     tolerance=self.tolerance,
+            #     fill_value=self.pad_value)            
+            
+            data = self.reindex_fast(coords)
         else:
             data = self.array.sel(**(coords), method="nearest")  # type: ignore
         if (
