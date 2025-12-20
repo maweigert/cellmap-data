@@ -423,7 +423,6 @@ class CellMapImage(CellMapImageBase):
                     array = array_future.result()
                 data = xt._TensorStoreAdapter(array)
             elif self.cache_in_memory:
-                print("Caching in memory", self.path)
                 # Zarr backend with RAM caching (copy compressed chunks to MemoryStore)
                 mem_store = MemoryStore()
                 zarr.copy_store(

@@ -2,7 +2,7 @@
 import functools
 import logging
 import os
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Any, Callable, Mapping, Optional, Sequence
 
 import numpy as np
@@ -678,10 +678,17 @@ class CellMapDataset(Dataset, CellMapBaseDataset):
         """
         empty_store = self.get_empty_store(array_info, device=torch.device("cpu"))
         target_array = {}
-        for i, label in enumerate(self.classes):
-            target_array[label] = self.get_label_array(
-                label, i, array_info, empty_store
-            )
+
+        # Parallel creation of CellMapImage per label (speeds up cache_in_memory loading)
+        n_workers = min(8, len(self.classes)) if self.classes else 1
+        with ThreadPoolExecutor(max_workers=n_workers) as executor:
+            futures = {
+                executor.submit(self.get_label_array, label, i, array_info, empty_store): label
+                for i, label in enumerate(self.classes)
+            }
+            for future in as_completed(futures):
+                label = futures[future]
+                target_array[label] = future.result()
 
         for label in self.classes:
             if isinstance(target_array.get(label), (CellMapImage, EmptyImage)):
