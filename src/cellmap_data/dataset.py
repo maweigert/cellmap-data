@@ -61,6 +61,8 @@ class CellMapDataset(Dataset, CellMapBaseDataset):
         device: Optional[str | torch.device] = None,
         max_workers: Optional[int] = None,
         cache_target_arrays: bool = False,
+        sampling_box_inputs: Optional[Sequence[str]] = None,
+        sampling_box_targets: Optional[Sequence[str]] = None,
     ) -> None:
         """Initializes the CellMapDataset class.
 
@@ -85,6 +87,10 @@ class CellMapDataset(Dataset, CellMapBaseDataset):
             device: The device for torch tensors.
             max_workers: Max worker threads for data loading.
             cache_target_arrays: If True, load target arrays into RAM for faster access.
+            sampling_box_inputs: Input array names to use for sampling_box computation.
+                None = use all inputs (default), [] = use no inputs.
+            sampling_box_targets: Target array names to use for sampling_box computation.
+                None = use all targets (default), [] = use no targets.
         """
         super().__init__()
         self.raw_path = raw_path
@@ -106,6 +112,8 @@ class CellMapDataset(Dataset, CellMapBaseDataset):
         self.empty_value = empty_value
         self.pad = pad
         self.cache_target_arrays = cache_target_arrays
+        self.sampling_box_inputs = sampling_box_inputs
+        self.sampling_box_targets = sampling_box_targets
         self._current_center = None
         self._current_spatial_transforms = None
         self.input_sources: dict[str, CellMapImage] = {}
@@ -213,6 +221,8 @@ class CellMapDataset(Dataset, CellMapBaseDataset):
         device: Optional[str | torch.device] = None,
         max_workers: Optional[int] = None,
         cache_target_arrays: bool = False,
+        sampling_box_inputs: Optional[Sequence[str]] = None,
+        sampling_box_targets: Optional[Sequence[str]] = None,
     ):
         # If 2D arrays are requested without a slicing axis, create a
         # multidataset with 3 datasets, each slicing along one axis.
@@ -386,9 +396,25 @@ class CellMapDataset(Dataset, CellMapBaseDataset):
             return self._sampling_box
         except AttributeError:
             sampling_box: dict[str, list[float]] | None = None
-            all_sources = list(self.input_sources.values()) + list(
-                self.target_sources.values()
-            )
+            # Filter input sources based on sampling_box_inputs
+            if self.sampling_box_inputs is None:
+                input_sources = list(self.input_sources.values())
+            else:
+                input_sources = [
+                    self.input_sources[k]
+                    for k in self.sampling_box_inputs
+                    if k in self.input_sources
+                ]
+            # Filter target sources based on sampling_box_targets
+            if self.sampling_box_targets is None:
+                target_sources = list(self.target_sources.values())
+            else:
+                target_sources = [
+                    self.target_sources[k]
+                    for k in self.sampling_box_targets
+                    if k in self.target_sources
+                ]
+            all_sources = input_sources + target_sources
             for source in all_sources:
                 if isinstance(source, dict):
                     for sub_source in source.values():
